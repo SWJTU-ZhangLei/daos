@@ -179,6 +179,11 @@ class DaosServerYamlParameters(YamlParameters):
                 if value is not None and value is not False:
                     yaml_data["engines"][index][name] = value
 
+        if self.using_nvme and self.nr_hugepages.value == "0":
+            self.log.debug("Setting hugepages when bdev class is 'nvme'")
+            self.nr_hugepages.update(4096, "nr_hugepages")
+            yaml_data["nr_hugepages"] = 4096
+
         return yaml_data
 
     def is_yaml_data_updated(self):
