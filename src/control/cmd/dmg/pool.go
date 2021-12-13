@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 
@@ -54,6 +55,7 @@ type PoolCreateCmd struct {
 	Properties    PoolSetPropsFlag `short:"P" long:"properties" description:"Pool properties to be set"`
 	ACLFile       string           `short:"a" long:"acl-file" description:"Access Control List file path for DAOS pool"`
 	Size          string           `short:"z" long:"size" description:"Total size of DAOS pool (auto)"`
+	All           bool             `short:"A" long:"all" description:"Use all remaining capacity"`
 	TierRatio     string           `short:"t" long:"tier-ratio" default:"6,94" description:"Percentage of storage tiers for pool storage (auto)"`
 	NumRanks      uint32           `short:"k" long:"nranks" description:"Number of ranks to use (auto)"`
 	NumSvcReps    uint32           `short:"v" long:"nsvc" description:"Number of pool service replicas"`
@@ -68,11 +70,17 @@ type PoolCreateCmd struct {
 
 // Execute is run when PoolCreateCmd subcommand is activated
 func (cmd *PoolCreateCmd) Execute(args []string) error {
-	if cmd.Size != "" && (cmd.ScmSize != "" || cmd.NVMeSize != "") {
-		return errIncompatFlags("size", "scm-size", "nvme-size")
+	var errIncompatFlagsNb int
+	for _, value := range [3]bool{cmd.Size != "", cmd.ScmSize != "" || cmd.NVMeSize != "", cmd.All} {
+		if value {
+			errIncompatFlagsNb++
+		}
 	}
-	if cmd.Size == "" && cmd.ScmSize == "" {
-		return errors.New("either --size or --scm-size must be supplied")
+	if errIncompatFlagsNb > 1 {
+		return errIncompatFlags("size", "scm-size", "nvme-size", "full-size")
+	}
+	if errIncompatFlagsNb < 1 {
+		return errors.New("either --size or --scm-size or --full-size must be supplied")
 	}
 
 	if cmd.PoolLabelFlag != "" {
@@ -110,7 +118,30 @@ func (cmd *PoolCreateCmd) Execute(args []string) error {
 		return errors.Wrap(err, "parsing rank list")
 	}
 
-	if cmd.Size != "" {
+	if cmd.All {
+		if cmd.NumRanks > 0 {
+			return errIncompatFlags("full", "num-ranks")
+		}
+
+		if cmd.RankList != "" {
+			return errIncompatFlags("full", "ranks")
+		}
+
+		scmBytes, nvmeBytes, err := cmd.GetMaxPoolSize()
+		if err != nil {
+			return err
+		}
+
+		req.TierBytes = []uint64{scmBytes, nvmeBytes}
+		req.TotalBytes = 0
+		req.TierRatio = nil
+
+		msg := "Creating DAOS pool with full storage allocation: "
+		msg += "%s SCM, %s NVMe"
+		cmd.log.Infof(msg,
+			humanize.Bytes(scmBytes),
+			humanize.Bytes(nvmeBytes))
+	} else if cmd.Size != "" {
 		// auto-selection of storage values
 		req.TotalBytes, err = humanize.ParseBytes(cmd.Size)
 		if err != nil {
@@ -202,6 +233,79 @@ func (cmd *PoolCreateCmd) Execute(args []string) error {
 	cmd.log.Info(bld.String())
 
 	return nil
+}
+
+// Return the maximal size of a pool which could be created with tall the storage nodes
+func (cmd *PoolCreateCmd) GetMaxPoolSize() (scmBytes uint64, nvmeBytes uint64, errOut error) {
+	ctx := context.Background()
+	storageScanReq := &control.StorageScanReq{Usage: true}
+	resp, err := control.StorageScan(ctx, cmd.ctlInvoker, storageScanReq)
+
+	if err != nil {
+		errOut = err
+		return
+	}
+
+	hsm := resp.HostStorage
+	scmBytes = math.MaxUint64
+	nvmeBytes = math.MaxUint64
+	for _, key := range hsm.Keys() {
+		hss := hsm[key]
+
+		storage := hss.HostStorage
+		if storage.RebootRequired {
+			cmd.log.Infof("Skipping hosts %s which needs to be rebooted",
+				hss.HostSet.String())
+			continue
+		}
+
+		if storage.ScmNamespaces.Free() <= 0 {
+			cmd.log.Infof("Skipping hosts %s without SCM storage",
+				hss.HostSet.String())
+			continue
+		}
+
+		if scmBytes > storage.ScmNamespaces.Free() {
+			scmBytes = storage.ScmNamespaces.Free()
+		}
+
+		if nvmeBytes > storage.NvmeDevices.Free() {
+			nvmeBytes = storage.NvmeDevices.Free()
+		}
+	}
+
+	if scmBytes == math.MaxUint64 {
+		return 0, 0, errors.New("No SCM storage available")
+	}
+
+	const minScmBytes = 1000000000
+	const extraBytes = 200000000
+	if scmBytes < minScmBytes+extraBytes {
+		msg := "Not enough SCM storage available: "
+		msg += "at least %s of SCM storage (%s missing) on all nodes is needed"
+		msg = fmt.Sprintf(msg,
+			humanize.Bytes(minScmBytes+extraBytes),
+			humanize.Bytes(minScmBytes+extraBytes-scmBytes))
+		errOut = errors.New(msg)
+		return
+	}
+	scmBytes -= extraBytes
+
+	if nvmeBytes == math.MaxUint64 {
+		cmd.log.Infof("Creating DAOS pool without NVME storage")
+		nvmeBytes = 0
+	}
+
+	scmRatio := 1.0
+	if nvmeBytes > 0 {
+		scmRatio = float64(scmBytes) / float64(nvmeBytes)
+	}
+	if scmRatio < storage.MinScmToNVMeRatio {
+		msg := "SCM:NVMe ratio is less than %0.2f%%, DAOS performance will suffer"
+		cmd.log.Infof(msg, storage.MinScmToNVMeRatio*100)
+	}
+
+	return
 }
 
 // PoolListCmd represents the command to fetch a list of all DAOS pools in the system.

@@ -182,6 +182,30 @@ func TestPoolCommands(t *testing.T) {
 			errors.New("may not be mixed"),
 		},
 		{
+			"Create pool with incompatible arguments",
+			fmt.Sprintf("pool create --size %s --full-size", testSizeStr),
+			"",
+			errors.New("may not be mixed"),
+		},
+		{
+			"Create pool with incompatible arguments (auto nvme-size)",
+			fmt.Sprintf("pool create --full-size --nvme-size %s", testSizeStr),
+			"",
+			errors.New("may not be mixed"),
+		},
+		{
+			"Create pool with incompatible arguments (auto scm-size)",
+			fmt.Sprintf("pool create --full-size --scm-size %s", testSizeStr),
+			"",
+			errors.New("may not be mixed"),
+		},
+		{
+			"Create pool with incompatible arguments",
+			fmt.Sprintf("pool create --size %s --full-size --nvme-size %s", testSizeStr, testSizeStr),
+			"",
+			errors.New("may not be mixed"),
+		},
+		{
 			"Create pool with incompatible rank arguments (auto)",
 			fmt.Sprintf("pool create --size %s --nranks 16 --ranks 1,2,3", testSizeStr),
 			"",
