@@ -637,6 +637,7 @@ struct obj_io_context {
 	uint32_t		 ioc_began:1,
 				 ioc_free_sgls:1,
 				 ioc_lost_reply:1,
+				 ioc_from_another_srv:1,
 				 ioc_fetch_snap:1;
 };
 

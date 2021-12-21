@@ -170,26 +170,30 @@ cont_aggregate_runnable(struct ds_cont_child *cont, struct sched_request *req,
 		return false;
 	}
 
-	if (pool->sp_reintegrating) {
-		if (param->ap_vos_agg)
+	if (pool->sp_rebuilding) {
+		if (param->ap_vos_agg) {
+			if (cont->sc_vos_agg_active)
+				D_INFO(DF_CONT": skip VOS aggregation during rebuild.\n",
+				       DP_CONT(cont->sc_pool->spc_uuid, cont->sc_uuid));
 			cont->sc_vos_agg_active = 0;
-		else
+		} else {
+			if (cont->sc_ec_agg_active)
+				D_INFO(DF_CONT": skip EC aggregation during rebuild.\n",
+				       DP_CONT(cont->sc_pool->spc_uuid, cont->sc_uuid));
 			cont->sc_ec_agg_active = 0;
-		D_DEBUG(DB_EPC, DF_CONT": skip %s aggregation during reintegration %d.\n",
-			DP_CONT(cont->sc_pool->spc_uuid, cont->sc_uuid),
-			param->ap_vos_agg ? "VOS":"EC", pool->sp_reintegrating);
+		}
 		return false;
 	}
 
 	if (param->ap_vos_agg) {
 		if (!cont->sc_vos_agg_active)
-			D_DEBUG(DB_EPC, DF_CONT": resume VOS aggregation after reintegration.\n",
+			D_INFO(DF_CONT": resume VOS aggregation after rebuild.\n",
 				DP_CONT(cont->sc_pool->spc_uuid, cont->sc_uuid));
 		cont->sc_vos_agg_active = 1;
 	} else {
 		if (!cont->sc_ec_agg_active)
-			D_DEBUG(DB_EPC, DF_CONT": resume EC aggregation after reintegration.\n",
-				DP_CONT(cont->sc_pool->spc_uuid, cont->sc_uuid));
+			D_INFO(DF_CONT": resume EC aggregation after rebuild.\n",
+			       DP_CONT(cont->sc_pool->spc_uuid, cont->sc_uuid));
 		cont->sc_ec_agg_active = 1;
 	}
 

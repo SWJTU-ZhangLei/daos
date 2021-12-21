@@ -476,8 +476,7 @@ migrate_pool_tls_lookup_create(struct ds_pool *pool, int version,
 
 	tls = migrate_pool_tls_lookup(pool->sp_uuid, version);
 	D_ASSERT(tls != NULL);
-	if (opc == RB_OP_REINT)
-		pool->sp_reintegrating++;
+	pool->sp_rebuilding++;
 
 out:
 	D_DEBUG(DB_TRACE, "create tls "DF_UUID": "DF_RC"\n",
@@ -1321,9 +1320,6 @@ migrate_fetch_update_bulk(struct migrate_one *mrone, daos_handle_t oh,
 {
 	int rc = 0;
 
-	if (obj_shard_is_ec_parity(mrone->mo_oid, &mrone->mo_oca))
-		return migrate_fetch_update_parity(mrone, oh, ds_cont);
-
 	if (!daos_oclass_is_ec(&mrone->mo_oca))
 		return __migrate_fetch_update_bulk(mrone, oh, mrone->mo_iods,
 						   mrone->mo_iod_num,
@@ -1534,6 +1530,8 @@ migrate_dkey(struct migrate_pool_tls *tls, struct migrate_one *mrone,
 
 	if (mrone->mo_iods[0].iod_type == DAOS_IOD_SINGLE)
 		rc = migrate_fetch_update_single(mrone, oh, cont);
+	else if (obj_shard_is_ec_parity(mrone->mo_oid, &mrone->mo_oca))
+		rc = migrate_fetch_update_parity(mrone, oh, cont);
 	else if (data_size < MAX_BUF_SIZE || data_size == (daos_size_t)(-1))
 		rc = migrate_fetch_update_inline(mrone, oh, cont);
 	else
@@ -2469,6 +2467,12 @@ retry:
 				break;
 			}
 			continue;
+		} else if (rc == -DER_AGAIN) {
+			D_DEBUG(DB_REBUILD, DF_UUID" VOS aggregate is still active"
+				" retry "DF_UOID" later.\n", DP_UUID(arg->cont_uuid),
+				DP_UOID(arg->oid));
+			dss_sleep(500); /* sleep 500 ms and retry */
+			goto retry;
 		} else if (rc && daos_anchor_get_flags(&dkey_anchor) &
 			   DIOF_TO_LEADER) {
 			if (rc != -DER_INPROGRESS) {
@@ -2604,8 +2608,7 @@ ds_migrate_stop(struct ds_pool *pool, unsigned int version)
 	if (rc)
 		D_ERROR(DF_UUID" migrate stop: %d\n", DP_UUID(pool->sp_uuid), rc);
 
-	if (tls->mpt_opc == RB_OP_REINT)
-		pool->sp_reintegrating--;
+	pool->sp_rebuilding--;
 	migrate_pool_tls_put(tls);
 	migrate_pool_tls_put(tls);
 	D_INFO(DF_UUID" migrate stopped\n", DP_UUID(pool->sp_uuid));

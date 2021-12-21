@@ -1784,6 +1784,7 @@ obj_ioc_init(uuid_t pool_uuid, uuid_t coh_uuid, uuid_t cont_uuid, int opc,
 		 */
 		D_DEBUG(DB_TRACE, DF_UUID"/%p is server cont hdl\n",
 			DP_UUID(coh_uuid), coh);
+		ioc->ioc_from_another_srv = 1;
 	}
 
 	if (DAOS_FAIL_CHECK(DAOS_REBUILD_NO_HDL))
@@ -2858,6 +2859,12 @@ obj_local_enum(struct obj_io_context *ioc, crt_rpc_t *rpc,
 	} else {
 		/* object iteration for rebuild or consistency verification. */
 		D_ASSERT(opc == DAOS_OBJ_RPC_ENUMERATE);
+		if ((ioc->ioc_from_another_srv && ioc->ioc_coc->sc_vos_agg_active)) {
+			D_DEBUG(DB_IO, DF_UUID" agg is still active.\n",
+			       DP_UUID(ioc->ioc_coc->sc_uuid));
+			D_GOTO(failed, rc = -DER_AGAIN);
+		}
+
 		type = VOS_ITER_DKEY;
 		if (daos_anchor_get_flags(&anchors[0].ia_dkey) &
 		      DIOF_WITH_SPEC_EPOCH) {
