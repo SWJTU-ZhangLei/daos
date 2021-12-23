@@ -110,6 +110,30 @@ evt_iter_finish(daos_handle_t ih)
 }
 
 static int
+evt_rect_sorted_cmp(const struct evt_rect *rt1, const struct evt_rect *rt2)
+{
+	if (rt1->rc_ex.ex_lo > rt2->rc_ex.ex_hi)
+		return 1;
+
+	if (rt1->rc_ex.ex_hi < rt2->rc_ex.ex_lo)
+		return -1;
+
+	if (rt1->rc_epc > rt2->rc_epc)
+		return -1;
+
+	if (rt1->rc_epc < rt2->rc_epc)
+		return 1;
+
+	if (rt1->rc_minor_epc > rt2->rc_minor_epc)
+		return -1;
+
+	if (rt1->rc_minor_epc < rt2->rc_minor_epc)
+		return 1;
+
+	return 0;
+}
+
+static int
 evt_iter_probe_find(struct evt_iterator *iter, const struct evt_rect *rect)
 {
 	struct evt_entry_array	*enta;
@@ -126,13 +150,13 @@ evt_iter_probe_find(struct evt_iterator *iter, const struct evt_rect *rect)
 	if (start == end) {
 		mid = start;
 		evt_ent2rect(&rect2, evt_ent_array_get(enta, mid));
-		cmp = evt_rect_cmp(rect, &rect2);
+		cmp = evt_rect_sorted_cmp(rect, &rect2);
 	}
 
 	while (start != end) {
 		mid = start + ((end + 1 - start) / 2);
 		evt_ent2rect(&rect2, evt_ent_array_get(enta, mid));
-		cmp = evt_rect_cmp(rect, &rect2);
+		cmp = evt_rect_sorted_cmp(rect, &rect2);
 
 		if (cmp == 0)
 			break;
@@ -141,7 +165,7 @@ evt_iter_probe_find(struct evt_iterator *iter, const struct evt_rect *rect)
 				mid = start;
 				evt_ent2rect(&rect2,
 					     evt_ent_array_get(enta, mid));
-				cmp = evt_rect_cmp(rect, &rect2);
+				cmp = evt_rect_sorted_cmp(rect, &rect2);
 				break;
 			}
 			end = mid;
@@ -358,7 +382,13 @@ evt_iter_probe_sorted(struct evt_context *tcx, struct evt_iterator *iter,
 	index = evt_iter_probe_find(iter, rect);
 	if (index == -1)
 		return -DER_NONEXIST;
+
 	iter->it_index = index;
+	entry = evt_ent_array_get(iter->it_entries, index);
+	entry->en_sel_ext.ex_lo = max(rect->rc_ex.ex_lo, entry->en_ext.ex_lo);
+
+	D_DEBUG(DB_TRACE, "probe ent "DF_EXT" Update ent "DF_EXT"\n",
+		DP_EXT(&rect->rc_ex), DP_EXT(&entry->en_sel_ext));
 out:
 	iter->it_state = EVT_ITER_READY;
 	return evt_iter_skip(tcx, iter);
